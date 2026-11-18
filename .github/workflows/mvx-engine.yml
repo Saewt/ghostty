@@ -1,0 +1,81 @@
+name: Mvx engine
+
+on:
+  push:
+    branches: [mvx]
+    tags: ["engine-*"]
+  pull_request:
+    branches: [mvx]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mvx-engine-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  ZIG_VERSION: 0.17.0
+  ZIG_SHA256: b607e9b9234790a008116ae5bdb71c6243b84b9fb42a53a9e70fde41c06c536a
+
+jobs:
+  engine:
+    name: Test and package
+    runs-on: macos-15
+    timeout-minutes: 120
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.2.app
+
+      - name: Install Zig
+        run: |
+          archive="$RUNNER_TEMP/zig.tar.xz"
+          curl -fsSL -o "$archive" "https://ziglang.org/download/$ZIG_VERSION/zig-aarch64-macos-$ZIG_VERSION.tar.xz"
+          echo "$ZIG_SHA256  $archive" | shasum -a 256 -c -
+          tar -xJf "$archive" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/zig-aarch64-macos-$ZIG_VERSION" >> "$GITHUB_PATH"
+
+      - name: Run engine tests
+        run: zig build test -Di18n=false
+
+      - name: Name the package
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/engine-* ]]; then
+            echo "PACKAGE_TAG=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
+          else
+            echo "PACKAGE_TAG=engine-test-${GITHUB_SHA:0:12}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build package
+        run: python3 mvx/package.py release --output "$RUNNER_TEMP/package" --release-tag "$PACKAGE_TAG"
+
+      - name: Keep the package with this run
+        uses: actions/upload-artifact@v4
+        with:
+          name: ghosttykit-package
+          path: ${{ runner.temp }}/package
+          if-no-files-found: error
+
+      - name: Publish package
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          package="$RUNNER_TEMP/package"
+          if [[ "$GITHUB_REF" == refs/tags/engine-* ]]; then
+            flags=(--verify-tag)
+          else
+            flags=(--prerelease --target "$GITHUB_SHA")
+          fi
+          gh release create "$PACKAGE_TAG" "${flags[@]}" --latest=false \
+            --title "GhosttyKit $PACKAGE_TAG" --notes-file "$package/release-notes.md" \
+            "$package/GhosttyKit.xcframework.zip" "$package/ghostty-provenance.json" \
+            "$package/ghostty-build-evidence.zip" "$package/package-summary.json"
