@@ -47,8 +47,7 @@ jobs:
         run: python3 mvx/package.py prefetch
 
       - name: Run engine tests
-        # Mvx ships the embedded library, so Ghostty's own macOS app tests do not apply.
-        run: zig build test -Di18n=false -Demit-macos-app=false -Demit-xcframework=false
+        run: python3 mvx/package.py test
 
       - name: Name the package
         run: |

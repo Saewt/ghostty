@@ -99,6 +99,18 @@ def command_prefetch(_args):
     prefetch_dependencies()
 
 
+def command_test(_args):
+    # The version is explicit because the engine build rejects any other tag name.
+    # Mvx ships the embedded library, so Ghostty's own macOS app tests do not apply.
+    subprocess.run([
+        zig_executable(), "build", "test",
+        "-Dversion-string=" + engine_version(),
+        "-Di18n=false",
+        "-Demit-macos-app=false",
+        "-Demit-xcframework=false",
+    ], cwd=ROOT, check=True)
+
+
 def command_dev(_args):
     prefetch_dependencies()
     subprocess.run(build_command(), cwd=ROOT, check=True)
@@ -219,6 +231,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("prefetch").set_defaults(run=command_prefetch)
+    commands.add_parser("test").set_defaults(run=command_test)
     commands.add_parser("dev").set_defaults(run=command_dev)
     release = commands.add_parser("release")
     release.add_argument("--output", required=True)
