@@ -34,5 +34,7 @@ permanent package. Mvx adopts a package by updating its
 ## Syncing upstream
 
 Merge an upstream release in its own pull request and update
-`mvx/upstream-base.json` in the same change. `mvx/ghostty_provenance.py` is a copy
+`mvx/upstream-base.json` in the same change. Upstream's workflows are removed on
+this branch because they need Ghostty's own runners, so keep them deleted when
+resolving a merge. `mvx/ghostty_provenance.py` is a copy
 of the verifier in the Mvx repository, so change them together.
