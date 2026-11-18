@@ -18,6 +18,9 @@ import sys
 import tempfile
 import zipfile
 
+# A release is recorded from a clean checkout, so importing must not write files.
+sys.dont_write_bytecode = True
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "mvx"))
 import ghostty_provenance as provenance  # noqa: E402
