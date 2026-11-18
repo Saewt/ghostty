@@ -22,12 +22,20 @@ scripts/ghostty-dev --open
 It builds this engine and links it into an isolated copy of Mvx. Your installed
 app, its profile, and the package pinned by Mvx are left alone.
 
-## Packages
+## Testing and publishing
 
-Every push to `mvx` runs the engine tests and publishes a test package named
-`engine-test-<commit>`. A tag named `engine-<version>-mvx.<n>` publishes a
-permanent package. Mvx adopts a package by updating its
-`vendor/ghostty/ghosttykit.lock.json` in a pull request.
+Everything runs on your Mac. Pushing to this repository starts no workflow.
+
+```sh
+python3 mvx/package.py test
+git tag -a engine-1.4.0-mvx.2 -m "Mvx engine 1.4.0"
+git push origin mvx engine-1.4.0-mvx.2
+python3 mvx/package.py publish --tag engine-1.4.0-mvx.2
+```
+
+`publish` tests the tag in a clean clone, builds it, records its provenance, and
+publishes the package. Add `--skip-tests` when that commit has already passed.
+Mvx adopts a package with `python3 scripts/ghosttykit_restore.py --adopt <tag>`.
 
 `-Di18n=false` is required. Turning it on links GNU libintl (LGPL) into the app.
 

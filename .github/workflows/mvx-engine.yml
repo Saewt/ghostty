@@ -1,11 +1,8 @@
 name: Mvx engine
 
+# Engine work is tested and packaged locally with mvx/package.py. This workflow
+# only runs when started by hand.
 on:
-  push:
-    branches: [mvx]
-    tags: ["engine-*"]
-  pull_request:
-    branches: [mvx]
   workflow_dispatch:
 
 permissions:

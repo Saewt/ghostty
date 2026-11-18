@@ -2,7 +2,9 @@
 """Build the GhosttyKit package that Mvx links against.
 
 `dev` rebuilds the engine in place for local work with an Mvx checkout.
-`release` makes a clean build from a clean commit and records its provenance.
+`test` runs the engine tests in the configuration Mvx ships.
+`publish` tests and packages a pushed tag on this Mac and publishes the package.
+`release` is the clean, recorded build that `publish` runs.
 """
 
 import argparse
@@ -25,6 +27,12 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "mvx"))
 import ghostty_provenance as provenance  # noqa: E402
 
+FORK_URL = "https://github.com/Saewt/ghostty.git"
+FORK_REPOSITORY = "Saewt/ghostty"
+# Provenance records absolute paths and is published, so packages are built here
+# rather than under the maintainer's home directory.
+PUBLISH_DIRECTORY = pathlib.Path("/private/tmp/mvx-engine-release")
+RELEASE_TAG = re.compile(r"engine-\d+\.\d+\.\d+-mvx\.\d+\Z")
 OUTPUT = ROOT / "macos/GhosttyKit.xcframework"
 LIBRARY = OUTPUT / "macos-arm64/libghostty-internal.a"
 # i18n stays off: enabling it links GNU libintl (LGPL) into the Mvx app.
@@ -109,6 +117,67 @@ def command_test(_args):
         "-Demit-macos-app=false",
         "-Demit-xcframework=false",
     ], cwd=ROOT, check=True)
+
+
+def git_output(*args):
+    return subprocess.run(["git", *args], cwd=ROOT, check=True, capture_output=True, text=True).stdout.strip()
+
+
+def require_no_private_paths(package):
+    """Refuse to publish files that name this Mac's home directory."""
+    home = str(pathlib.Path.home()).encode()
+    for path in sorted(package.iterdir()):
+        if path.suffix == ".zip" and path.name.startswith("ghostty-build-evidence"):
+            with zipfile.ZipFile(path) as bundle:
+                entries = [(path.name + ":" + name, bundle.read(name)) for name in bundle.namelist()]
+        elif path.suffix == ".zip":
+            continue
+        else:
+            entries = [(path.name, path.read_bytes())]
+        for name, contents in entries:
+            if home in contents:
+                raise SystemExit("ERROR: {} names the local home directory".format(name))
+
+
+def command_publish(args):
+    if not RELEASE_TAG.fullmatch(args.tag):
+        raise SystemExit("ERROR: release tags look like engine-1.4.0-mvx.1")
+    if git_output("status", "--porcelain"):
+        raise SystemExit("ERROR: commit your changes before publishing")
+    head = git_output("rev-parse", "HEAD")
+    remote = git_output("ls-remote", FORK_URL, "refs/tags/{0}^{{}}".format(args.tag)).split()
+    if not remote or remote[0] != head:
+        raise SystemExit("ERROR: push tag {} at this commit first".format(args.tag))
+
+    shutil.rmtree(PUBLISH_DIRECTORY, ignore_errors=True)
+    checkout = PUBLISH_DIRECTORY / "ghostty"
+    package = PUBLISH_DIRECTORY / "package"
+    zig_link = PUBLISH_DIRECTORY / "zig/zig"
+    zig_link.parent.mkdir(parents=True)
+    zig_link.symlink_to(zig_executable())
+    environment = dict(os.environ, ZIG=str(zig_link))
+    try:
+        subprocess.run(["git", "clone", "--quiet", "--reference", str(ROOT), FORK_URL, str(checkout)], check=True)
+        subprocess.run(["git", "checkout", "--quiet", "--detach", args.tag], cwd=checkout, check=True)
+        script = str(checkout / "mvx/package.py")
+        subprocess.run([sys.executable, script, "prefetch"], cwd=checkout, check=True, env=environment)
+        if not args.skip_tests:
+            subprocess.run([sys.executable, script, "test"], cwd=checkout, check=True, env=environment)
+        subprocess.run(
+            [sys.executable, script, "release", "--output", str(package), "--release-tag", args.tag],
+            cwd=checkout,
+            check=True,
+            env=environment,
+        )
+        require_no_private_paths(package)
+        subprocess.run([
+            "gh", "release", "create", args.tag, "--repo", FORK_REPOSITORY, "--verify-tag", "--latest=false",
+            "--title", "GhosttyKit " + args.tag, "--notes-file", str(package / "release-notes.md"),
+            str(package / "GhosttyKit.xcframework.zip"), str(package / "ghostty-provenance.json"),
+            str(package / "ghostty-build-evidence.zip"), str(package / "package-summary.json"),
+        ], check=True)
+    finally:
+        shutil.rmtree(PUBLISH_DIRECTORY, ignore_errors=True)
 
 
 def command_dev(_args):
@@ -233,6 +302,10 @@ def main():
     commands.add_parser("prefetch").set_defaults(run=command_prefetch)
     commands.add_parser("test").set_defaults(run=command_test)
     commands.add_parser("dev").set_defaults(run=command_dev)
+    publish = commands.add_parser("publish")
+    publish.add_argument("--tag", required=True)
+    publish.add_argument("--skip-tests", action="store_true", help="Only when this commit already passed.")
+    publish.set_defaults(run=command_publish)
     release = commands.add_parser("release")
     release.add_argument("--output", required=True)
     release.add_argument("--release-tag", required=True)
