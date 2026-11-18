@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -34,6 +35,14 @@ BUILD_FLAGS = [
     "-Demit-themes=false",
     "-Di18n=false",
 ]
+# codeberg.org is unreachable from hosted runners and some networks. Zig checks
+# the fetched content against the hash pinned by the translate_c package.
+MIRRORED_DEPENDENCIES = [
+    (
+        "git+https://github.com/Vexu/arocc#d0c8c4d9c55daa7ef6e40cf0f630a5b5e900989b",
+        "aro-0.0.0-JSD1QtuBNwCASyBtNF3pqTl_W3oAJQGEVyFAtrBSE_Pa",
+    ),
+]
 
 
 def engine_version():
@@ -41,11 +50,28 @@ def engine_version():
     return re.search(r'\.version\s*=\s*"([^"]+)"', text).group(1)
 
 
-def build_command():
+def zig_executable():
     zig = shutil.which(os.environ.get("ZIG", "zig"))
     if not zig:
         raise SystemExit("ERROR: zig was not found; set ZIG to the Zig executable")
-    return [zig, "build", "-Dversion-string=" + engine_version(), *BUILD_FLAGS]
+    return zig
+
+
+def build_command():
+    return [zig_executable(), "build", "-Dversion-string=" + engine_version(), *BUILD_FLAGS]
+
+
+def prefetch_dependencies():
+    for url, expected in MIRRORED_DEPENDENCIES:
+        fetched = subprocess.run(
+            [zig_executable(), "fetch", url],
+            cwd=tempfile.gettempdir(),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        if fetched != expected:
+            raise SystemExit("ERROR: {} has content hash {}, expected {}".format(url, fetched, expected))
 
 
 def upstream_base():
@@ -66,13 +92,19 @@ def write_json(path, value):
     return path
 
 
+def command_prefetch(_args):
+    prefetch_dependencies()
+
+
 def command_dev(_args):
+    prefetch_dependencies()
     subprocess.run(build_command(), cwd=ROOT, check=True)
     print(OUTPUT)
 
 
 def command_release(args):
     base = upstream_base()
+    prefetch_dependencies()
     output = pathlib.Path(args.output).resolve()
     evidence = output / "evidence"
     evidence.mkdir(parents=True)
@@ -172,7 +204,9 @@ def command_release(args):
         "Fork commit: `{fork_commit}`\n"
         "Upstream base: Ghostty `{upstream_tag}` (`{upstream_base_commit}`)\n"
         "Archive SHA-256: `{archive_sha256}`\n"
-        "Provenance SHA-256: `{provenance_sha256}`\n".format(**summary),
+        "Provenance SHA-256: `{provenance_sha256}`\n\n"
+        "`arocc` was fetched from `github.com/Vexu/arocc` because `codeberg.org` is unreachable "
+        "from the build host. Zig verified the content hash pinned by the tag.\n".format(**summary),
         encoding="utf-8",
     )
     print(json.dumps(summary, indent=2))
@@ -181,6 +215,7 @@ def command_release(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("prefetch").set_defaults(run=command_prefetch)
     commands.add_parser("dev").set_defaults(run=command_dev)
     release = commands.add_parser("release")
     release.add_argument("--output", required=True)

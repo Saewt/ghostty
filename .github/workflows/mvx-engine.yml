@@ -43,6 +43,9 @@ jobs:
           tar -xJf "$archive" -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/zig-aarch64-macos-$ZIG_VERSION" >> "$GITHUB_PATH"
 
+      - name: Fetch mirrored dependencies
+        run: python3 mvx/package.py prefetch
+
       - name: Run engine tests
         run: zig build test -Di18n=false
 
